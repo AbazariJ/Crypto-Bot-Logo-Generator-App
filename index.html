@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Bot Logo Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4 sm:p-8">
+
+    <div class="w-full max-w-4xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-cyan-400">Crypto Bot Logo Generator</h1>
+            <p class="text-gray-400 mt-2">Create unique, iconic logos for your trading bots.</p>
+        </header>
+
+        <!-- Main Controls Section -->
+        <section id="controlsSection" class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+            <div class="mb-6">
+                <label for="apiKeyInput" class="block text-sm font-medium text-gray-300 mb-2">Your Google AI API Key</label>
+                <input type="password" id="apiKeyInput" placeholder="Enter your API Key here to begin" class="w-full bg-gray-700 text-white rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                <p id="apiKeyError" class="text-red-400 mt-2 text-sm hidden"></p>
+            </div>
+
+            <div class="mb-6">
+                 <label for="botNameInput" class="block text-sm font-medium text-gray-300 mb-2">Enter Your Bot Name</label>
+                <div class="flex flex-col sm:flex-row gap-4">
+                    <input type="text" id="botNameInput" placeholder="e.g., AlgoDragon" class="flex-grow bg-gray-700 text-white rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                    <button onclick="handleCustomNameSubmit()" class="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 px-6 rounded-md transition duration-300">Generate Logos</button>
+                </div>
+                 <p id="botNameError" class="text-red-400 mt-2 text-sm hidden"></p>
+            </div>
+
+            <div class="text-center my-4 text-gray-500">or</div>
+
+            <button id="suggestNameBtn" onclick="suggestBotNames()" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 px-6 rounded-md transition duration-300 w-full">Suggest Names For Me</button>
+            <div id="nameLoader" class="flex justify-center mt-4 hidden">
+                <div class="loader"></div>
+            </div>
+            <div id="nameSuggestions" class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+             <p id="suggestionError" class="text-red-400 mt-4 text-center hidden"></p>
+        </section>
+
+        <!-- Results Section -->
+        <section id="resultsSection" class="hidden">
+             <h2 id="resultsHeader" class="text-3xl font-bold mb-6 text-center"></h2>
+             <div id="storySection" class="mb-8"></div>
+             <div id="promptResults" class="space-y-8"></div>
+             <div class="text-center mt-8">
+                 <button onclick="resetApp()" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-md transition duration-300">Start Over</button>
+             </div>
+        </section>
+
+    </div>
+
+    <script>
+        let apiKey = '';
+
+        const PROMPT_GENERATION_URL = (model = 'gemini-1.5-flash-latest') => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const IMAGE_GENERATION_URL = () => `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+
+        // --- Helper Functions ---
+        function showLoader(loaderId) { document.getElementById(loaderId).classList.remove('hidden'); }
+        function hideLoader(loaderId) { document.getElementById(loaderId).classList.add('hidden'); }
+        function showError(elementId, message) {
+            const errorEl = document.getElementById(elementId);
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+        function hideError(elementId) { document.getElementById(elementId).classList.add('hidden'); }
+
+        function validateApiKey() {
+            const inputKey = document.getElementById('apiKeyInput').value.trim();
+            if (!inputKey) {
+                showError('apiKeyError', 'API Key cannot be empty.');
+                return false;
+            }
+            apiKey = inputKey;
+            hideError('apiKeyError');
+            return true;
+        }
+
+        async function fetchWithRetry(url, payload, maxRetries = 3, initialBackoff = 1) {
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        return await response.json();
+                    }
+
+                    // Handle retryable errors like "Too Many Requests" or server errors
+                    if ((response.status === 429 || response.status >= 500) && attempt < maxRetries - 1) {
+                        const backoffTime = initialBackoff * (2 ** attempt) + Math.random();
+                        console.log(`API call failed with status ${response.status}. Retrying in ${backoffTime.toFixed(2)}s...`);
+                        await new Promise(resolve => setTimeout(resolve, backoffTime * 1000));
+                        continue; // Go to the next attempt
+                    }
+                    
+                    // For non-retryable errors, throw immediately
+                    const errorData = await response.json().catch(() => ({ error: { message: `HTTP error! status: ${response.status}` } }));
+                    throw new Error(errorData.error.message);
+
+                } catch (error) {
+                    if (attempt >= maxRetries - 1) {
+                        throw error; // Re-throw the last error if all retries fail
+                    }
+                }
+            }
+        }
+        
+        // --- Core Logic ---
+
+        function handleCustomNameSubmit() {
+            if (!validateApiKey()) return;
+            const botName = document.getElementById('botNameInput').value.trim();
+            if (!botName) {
+                showError('botNameError', 'Please enter a name for your bot.');
+                return;
+            }
+            hideError('botNameError');
+            startGenerationProcess(botName);
+        }
+
+        async function suggestBotNames() {
+            if (!validateApiKey()) return;
+            
+            showLoader('nameLoader');
+            document.getElementById('suggestNameBtn').disabled = true;
+            const suggestionsContainer = document.getElementById('nameSuggestions');
+            suggestionsContainer.innerHTML = '';
+            hideError('suggestionError');
+
+            const meta_prompt = "Suggest 4 creative, single or two-word names for a new crypto trading bot. The names should sound modern and tech-focused. Return the names as a JSON array of strings, for example: [\"CryptoSphere\", \"QuantumLeap\", \"ApexTrade\", \"SignalWave\"]. Provide only the JSON array.";
+            const payload = { contents: [{ parts: [{ text: meta_prompt }] }] };
+
+            try {
+                const result = await fetchWithRetry(PROMPT_GENERATION_URL(), payload);
+                if (!result || !result.candidates || !result.candidates[0].content.parts[0].text) {
+                    throw new Error("Name suggestion failed to return valid content.");
+                }
+                const rawText = result.candidates[0].content.parts[0].text;
+                const jsonResponse = rawText.trim().replace("```json", "").replace("```", "");
+                const names = JSON.parse(jsonResponse);
+
+                names.forEach(name => {
+                    const button = document.createElement('button');
+                    button.textContent = name;
+                    button.className = "bg-gray-700 hover:bg-cyan-500 hover:text-white p-4 rounded-lg transition duration-300";
+                    button.onclick = () => startGenerationProcess(name);
+                    suggestionsContainer.appendChild(button);
+                });
+
+            } catch (error) {
+                console.error("Error suggesting names:", error);
+                showError('suggestionError', `Failed to suggest names: ${error.message}`);
+            } finally {
+                hideLoader('nameLoader');
+                document.getElementById('suggestNameBtn').disabled = false;
+            }
+        }
+        
+        function startGenerationProcess(name) {
+            document.getElementById('controlsSection').classList.add('hidden');
+            document.getElementById('resultsSection').classList.remove('hidden');
+            document.getElementById('resultsHeader').textContent = `Generating assets for "${name}"`;
+            generateAssets(name);
+        }
+
+        async function generateBotStory(botName) {
+            const meta_prompt = `Write a short, one-paragraph imaginary origin story for a crypto trading bot named '${botName}'. The story should be exciting and related to the crypto market, data, or algorithms. The tone should be slightly futuristic and epic.`;
+            const payload = { contents: [{ parts: [{ text: meta_prompt }] }] };
+            const result = await fetchWithRetry(PROMPT_GENERATION_URL(), payload);
+            if (!result || !result.candidates || !result.candidates[0].content.parts[0].text) {
+                 throw new Error("Story generation failed to return valid content.");
+            }
+            return result.candidates[0].content.parts[0].text;
+        }
+
+        async function generatePrompts(botName, numPrompts = 3, custom_meta_prompt = null) {
+            const meta_prompt = custom_meta_prompt || `You are an expert in creating prompts for AI image generators. Your task is to generate ${numPrompts} different, concise image generation prompts for a logo for a crypto trading bot named '${botName}'. Each prompt must result in an image that is: minimal, iconic, vector-style, and clearly related to the bot's name and the world of crypto/algorithmic trading. Each prompt should also suggest a unique color atmosphere. Your output MUST be a JSON array of strings, with each string being a prompt. For example: ["prompt 1", "prompt 2"]. Provide only the JSON array.`;
+            
+            const payload = { contents: [{ parts: [{ text: meta_prompt }] }] };
+            const result = await fetchWithRetry(PROMPT_GENERATION_URL(), payload);
+
+            if (!result || !result.candidates || !result.candidates[0].content.parts[0].text) {
+                 throw new Error("Prompt generation failed to return valid content.");
+            }
+            const rawText = result.candidates[0].content.parts[0].text;
+            const jsonResponse = rawText.trim().replace(/```json/g, "").replace(/```/g, "");
+            return JSON.parse(jsonResponse);
+        }
+        
+        async function generateSinglePrompt(botName, story = null) {
+            let meta_prompt;
+            if (story) {
+                 meta_prompt = `Based on the following story, create one concise image generation prompt for a logo for the crypto trading bot named '${botName}'. The prompt must be minimal, iconic, vector-style, and directly reflect the key elements and atmosphere of the story. Story: '${story}'. Your output MUST be a single JSON string in an array, for example: ["prompt based on story"].`;
+            } else {
+                 meta_prompt = `You are an expert in creating prompts for AI image generators. Your task is to generate one concise image generation prompt for a logo for a crypto trading bot named '${botName}'. The prompt must result in an image that is: minimal, iconic, vector-style, and clearly related to the bot's name and the world of crypto/algorithmic trading. It should also suggest a unique color atmosphere. Your output MUST be a single JSON string in an array, for example: ["a new prompt"].`;
+            }
+            const prompts = await generatePrompts(botName, 1, meta_prompt);
+            return prompts[0];
+        }
+
+        async function generateImages(prompt, numImages = 2) {
+            const payload = {
+                instances: [{ prompt }],
+                parameters: { sampleCount: numImages }
+            };
+            
+            const result = await fetchWithRetry(IMAGE_GENERATION_URL(), payload);
+
+            if (!result.predictions) {
+                throw new Error("API response did not contain image predictions.");
+            }
+            return result.predictions.map(p => `data:image/png;base64,${p.bytesBase64Encoded}`);
+        }
+
+        async function generateAssets(botName) {
+            const resultsContainer = document.getElementById('promptResults');
+            const storyContainer = document.getElementById('storySection');
+            storyContainer.innerHTML = '<div class="flex justify-center"><div class="loader"></div></div>';
+            resultsContainer.innerHTML = '';
+
+            try {
+                // Generate story first
+                const story = await generateBotStory(botName);
+
+                // Display the story
+                storyContainer.innerHTML = `
+                    <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                        <h3 class="text-xl font-semibold mb-3 text-indigo-300">Origin Story</h3>
+                        <p class="text-gray-300 italic">${story}</p>
+                    </div>
+                `;
+
+                // Generate prompts, with the first one based on the story
+                const [storyBasedPrompt, otherPrompts] = await Promise.all([
+                    generateSinglePrompt(botName, story),
+                    generatePrompts(botName, 2)
+                ]);
+                
+                const prompts = [storyBasedPrompt, ...otherPrompts];
+
+                for (let i = 0; i < prompts.length; i++) {
+                    const prompt = prompts[i];
+                    
+                    const promptDiv = document.createElement('div');
+                    promptDiv.className = 'bg-gray-800 p-6 rounded-lg shadow-lg';
+                    promptDiv.innerHTML = `
+                        <div class="mb-4">
+                            <label for="prompt-input-${i}" class="block text-sm font-medium text-gray-300 mb-2">Prompt ${i + 1}</label>
+                            <textarea id="prompt-input-${i}" class="w-full bg-gray-700 text-white rounded-md p-3 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" rows="3">${prompt}</textarea>
+                        </div>
+                        <div class="flex gap-4 mb-4">
+                            <button onclick="handleRegenerate(${i})" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md transition duration-300">Regenerate Images</button>
+                            <button onclick="handleRefreshPrompt(${i}, '${botName.replace(/'/g, "\\'")}')" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md transition duration-300">Refresh Prompt</button>
+                        </div>
+                        <div id="image-container-${i}" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="flex justify-center items-center col-span-2"><div class="loader"></div></div>
+                        </div>
+                    `;
+                    resultsContainer.appendChild(promptDiv);
+
+                    const images = await generateImages(prompt);
+                    displayImages(i, images);
+                }
+
+            } catch (error) {
+                console.error("Error generating assets:", error);
+                storyContainer.innerHTML = ''; // Clear story loader on error
+                resultsContainer.innerHTML = `<p class="text-red-400 text-center">An error occurred: ${error.message}. Please check your API key and network, then try again.</p>`;
+            }
+        }
+
+        function displayImages(promptIndex, images) {
+            const imageContainer = document.getElementById(`image-container-${promptIndex}`);
+            imageContainer.innerHTML = ''; // Clear loader
+            images.forEach(imgData => {
+                const imgWrapper = document.createElement('div');
+                imgWrapper.className = 'relative group';
+                
+                const imgElement = document.createElement('img');
+                imgElement.src = imgData;
+                imgElement.className = 'rounded-lg w-full h-auto shadow-md';
+                imgWrapper.appendChild(imgElement);
+
+                const downloadButton = document.createElement('button');
+                downloadButton.innerHTML = 'Download';
+                downloadButton.className = 'absolute bottom-2 right-2 bg-black bg-opacity-50 text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-300';
+                downloadButton.onclick = () => handleDownload(imgData);
+                imgWrapper.appendChild(downloadButton);
+
+                imageContainer.appendChild(imgWrapper);
+            });
+        }
+        
+        async function handleRefreshPrompt(promptIndex, botName) {
+            const promptInput = document.getElementById(`prompt-input-${promptIndex}`);
+            promptInput.value = "Generating new prompt...";
+            promptInput.disabled = true;
+
+            try {
+                const newPrompt = await generateSinglePrompt(botName);
+                promptInput.value = newPrompt;
+                await handleRegenerate(promptIndex); // Automatically regenerate images with the new prompt
+            } catch (error) {
+                console.error("Error refreshing prompt:", error);
+                promptInput.value = "Failed to generate new prompt. Please try again.";
+            } finally {
+                promptInput.disabled = false;
+            }
+        }
+
+        async function handleRegenerate(promptIndex) {
+            const imageContainer = document.getElementById(`image-container-${promptIndex}`);
+            imageContainer.innerHTML = '<div class="flex justify-center items-center col-span-2"><div class="loader"></div></div>';
+            
+            const promptInput = document.getElementById(`prompt-input-${promptIndex}`);
+            const updatedPrompt = promptInput.value;
+
+            try {
+                const images = await generateImages(updatedPrompt);
+                displayImages(promptIndex, images);
+            } catch (error) {
+                console.error("Error regenerating images:", error);
+                imageContainer.innerHTML = `<p class="text-red-400 text-center col-span-2">Failed to regenerate images: ${error.message}</p>`;
+            }
+        }
+
+        function handleDownload(imageDataUrl) {
+            const link = document.createElement('a');
+            link.href = imageDataUrl;
+            link.download = `crypto_bot_logo_${Date.now()}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function resetApp() {
+            document.getElementById('resultsSection').classList.add('hidden');
+            document.getElementById('controlsSection').classList.remove('hidden');
+            document.getElementById('botNameInput').value = '';
+            document.getElementById('nameSuggestions').innerHTML = '';
+            document.getElementById('promptResults').innerHTML = '';
+            document.getElementById('storySection').innerHTML = '';
+        }
+
+    </script>
+</body>
+</html>
